@@ -2,8 +2,21 @@ $(document).ready(function () {
 	if (!OCA.Files) return;
 
 	var appid = 'files_clipboard',
-		$dir = $('#dir'),
 		$fileList = $('#fileList');
+
+
+	var $storageWatcher = setInterval(function() {
+		var stored_clipboard = localStorage.getItem(appid);
+		if (stored_clipboard) {
+			if (stored_clipboard != JSON.stringify(clipboard)) {
+				clipboard = JSON.parse(localStorage.getItem(appid));
+				update();
+			}
+			$paste.show();	
+		} else {
+			$paste.hide();
+		}
+	}, 1000);
 
 	var $cut = $('<a/>')
 		.attr('id', 'clipboard_cut')
@@ -31,7 +44,7 @@ $(document).ready(function () {
 		.hide()
 		.appendTo('#controls .creatable');
 
-	var clipboard = JSON.parse(sessionStorage.getItem(appid));
+	var clipboard = JSON.parse(localStorage.getItem(appid));
 	$fileList.on('changeDirectory', function () {
 		$fileList.off('DOMNodeRemoved', onRowRemoved);
 	});
@@ -60,7 +73,7 @@ $(document).ready(function () {
 
 	function onRowRemoved(event) {
 		var $target = $(event.target);
-		if (clipboard && clipboard.directory == $dir.val() && $target.is('tr[data-file]')) {
+		if (clipboard && clipboard.directory == $('#dir').val() && $target.is('tr[data-file]')) {
 			var fileIndex = clipboard.files.indexOf($target.attr('data-file'));
 			if (fileIndex != -1) {
 				clipboard.files.splice(fileIndex, 1);
@@ -77,7 +90,7 @@ $(document).ready(function () {
 		$copy.toggle((permissions & OC.PERMISSION_READ) != 0);
 
 		if (clipboard) {
-			var sameDirectory = clipboard.directory == $dir.val(),
+			var sameDirectory = clipboard.directory == $('#dir').val(),
 				noPermissions = !(permissions & OC.PERMISSION_CREATE),
 				disabled = noPermissions || sameDirectory,
 				title;
@@ -91,16 +104,11 @@ $(document).ready(function () {
 				.tipsy({ gravity: 'ne', fade: true })
 				.show();
 
-			if (clipboard.operation == 'cut' && clipboard.directory == $dir.val()) {
+			if (clipboard.operation == 'cut' && clipboard.directory == $('#dir').val()) {
 				var $trs = $('tr', $fileList);
 				clipboard.files.forEach(function (file) {
 					$trs.filterAttr('data-file', file).addClass('cut');
 				});
-			}
-
-			if (blink === true) {
-				$paste.addClass('blink');
-				setTimeout(function () { $paste.removeClass('blink'); }, 500);
 			}
 		} else {
 			$paste.hide();
@@ -112,21 +120,11 @@ $(document).ready(function () {
 	}
 
 	function cut(file) {
-		var files = file ? [file] : FileList.getSelectedFiles().map(function (file) { return file.name; });
-		clipboard = { operation: 'cut', directory: $dir.val(), files: files };
-		sessionStorage.setItem(appid, JSON.stringify(clipboard));
-		clearCut();
-		clearSelection();
-		update(true);
+		setClipboard('cut');
 	}
 
 	function copy(file) {
-		var files = file ? [file] : FileList.getSelectedFiles().map(function (file) { return file.name; });
-		clipboard = { operation: 'copy', directory: $dir.val(), files: files };
-		sessionStorage.setItem(appid, JSON.stringify(clipboard));
-		clearCut();
-		clearSelection();
-		update(true);
+		setClipboard('copy');
 	}
 
 	function clearSelection() {
@@ -137,10 +135,20 @@ $(document).ready(function () {
 		FileList.updateSelectionSummary();
 	}
 
+	function setClipboard(operation) {
+		var files = file ? [file] : FileList.getSelectedFiles().map(function (file) { return file.name; });
+		clipboard = { operation: operation, directory: $('#dir').val(), files: files };
+		localStorage.removeItem(appid);
+		localStorage.setItem(appid, JSON.stringify(clipboard));
+		clearCut();
+		clearSelection();
+		update();
+	}
+
 	function paste() {
 		if ($(this).hasClass('disabled')) return;
 		FileList.showMask();
-		clipboard.destination = $dir.val();
+		clipboard.destination = $('#dir').val();
 		$(window).on('beforeunload', processing);
 		replaceExistingFiles(function (replace) {
 			if (!replace) FileList.hideMask();
@@ -177,8 +185,9 @@ $(document).ready(function () {
 							OC.Notification.showHtml(message, { type: 'error' });
 						}
 						if (clipboard.operation == 'cut') {
-							sessionStorage.removeItem(appid);
+							localStorage.removeItem(appid);
 							clipboard = null;
+							$paste.hide();
 						}
 						$(window).off('beforeunload', processing);
 						FileList.reload();
