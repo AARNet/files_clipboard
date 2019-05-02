@@ -1,24 +1,26 @@
 $(document).ready(function () {
 	if (!OCA.Files) return;
 
-	var appid = 'files_clipboard',
-		$fileList = $('#fileList');
+	var appid = 'files_clipboard';
+	var $fileList = $('#fileList');
+	var clipboard = getClipboard();
 
-
+	// Watch storage for clipboard changes
 	var $storageWatcher = setInterval(function() {
-		var stored_clipboard = localStorage.getItem(appid);
+		var stored_clipboard = getClipboard();
 		if (stored_clipboard) {
-			if (stored_clipboard != JSON.stringify(clipboard)) {
-				clipboard = JSON.parse(localStorage.getItem(appid));
+			if (JSON.stringify(stored_clipboard) != JSON.stringify(clipboard)) {
+				clipboard = stored_clipboard;
 				update();
 			}
-			$paste.show();	
+			$pasteButton.show();	
 		} else {
-			$paste.hide();
+			$pasteButton.hide();
 		}
 	}, 1000);
 
-	var $cut = $('<a/>')
+	// The main action buttons
+	var $cutButton = $('<a/>')
 		.attr('id', 'clipboard_cut')
 		.append($('<img/>').addClass('svg').attr('src', OC.imagePath(appid, 'cut')))
 		.append(' ')
@@ -27,7 +29,7 @@ $(document).ready(function () {
 		.hide()
 		.appendTo('#headerName .selectedActions');
 
-	var $copy = $('<a/>')
+	var $copyButton = $('<a/>')
 		.attr('id', 'clipboard_copy')
 		.append($('<img/>').addClass('svg').attr('src', OC.imagePath(appid, 'copy')))
 		.append(' ')
@@ -36,7 +38,7 @@ $(document).ready(function () {
 		.hide()
 		.appendTo('#headerName .selectedActions');
 
-	var $paste = $('<a/>')
+	var $pasteButton = $('<a/>')
 		.attr('id', 'clipboard_paste')
 		.append($('<img/>').addClass('svg').attr('alt', t(appid, 'Paste')).attr('src', OC.imagePath(appid, 'paste')))
 		.addClass('button')
@@ -44,7 +46,7 @@ $(document).ready(function () {
 		.hide()
 		.appendTo('#controls .creatable');
 
-	var clipboard = JSON.parse(localStorage.getItem(appid));
+	// Watch for envents on the file list
 	$fileList.on('changeDirectory', function () {
 		$fileList.off('DOMNodeRemoved', onRowRemoved);
 	});
@@ -52,6 +54,7 @@ $(document).ready(function () {
 		$fileList.on('DOMNodeRemoved', onRowRemoved);
 	});
 
+	// Actions menu options
 	OCA.Files.fileActions.registerAction({
 		name: 'Cut',
 		displayName: t('files_clipboard', 'Cut'),
@@ -76,29 +79,36 @@ $(document).ready(function () {
 		if (clipboard && clipboard.directory == $('#dir').val() && $target.is('tr[data-file]')) {
 			var fileIndex = clipboard.files.indexOf($target.attr('data-file'));
 			if (fileIndex != -1) {
-				clipboard.files.splice(fileIndex, 1);
-				if (!clipboard.files.length) clipboard = null;
+				clipboard = setClipboard(clipboard.operation, clipboard.directory, clipboard.files.splice(fileIndex, 1));
+				if (!clipboard.files.length) {
+					clipboard = clearClipboard();
+				}
 			}
 			update();
 		}
 	}
 
-	function update(blink) {
+	function update() {
 		var permissions = parseInt($('#permissions').val());
 
-		$cut.toggle((permissions & OC.PERMISSION_READ && permissions & OC.PERMISSION_UPDATE) != 0);
-		$copy.toggle((permissions & OC.PERMISSION_READ) != 0);
+		$cutButton.toggle((permissions & OC.PERMISSION_READ && permissions & OC.PERMISSION_UPDATE) != 0);
+		$copyButton.toggle((permissions & OC.PERMISSION_READ) != 0);
 
 		if (clipboard) {
 			var sameDirectory = clipboard.directory == $('#dir').val(),
 				noPermissions = !(permissions & OC.PERMISSION_CREATE),
 				disabled = noPermissions || sameDirectory,
 				title;
-			if (sameDirectory) title = t(appid, 'Unable to paste: the files come from this directory.')
-			else if (noPermissions) title = t(appid, 'Unable to paste: you do not have the permissions to create files in this directory.')
-			else title = n(appid, 'Paste %n item', 'Paste %n items', clipboard.files.length);
+			if (sameDirectory) {
+				title = t(appid, 'Unable to paste: the files come from this directory.');
+			} else if (noPermissions) {
+				title = t(appid, 'Unable to paste: you do not have the permissions to create files in this directory.');
+			}
+			else {
+				title = n(appid, 'Paste %n item', 'Paste %n items', clipboard.files.length);
+			}
 
-			$paste
+			$pasteButton
 				.toggleClass('disabled', disabled)
 				.attr('title', title)
 				.tipsy({ gravity: 'ne', fade: true })
@@ -111,7 +121,7 @@ $(document).ready(function () {
 				});
 			}
 		} else {
-			$paste.hide();
+			$pasteButton.hide();
 		}
 	};
 
@@ -119,12 +129,22 @@ $(document).ready(function () {
 		$('tr[data-file]', $fileList).removeClass('cut');
 	}
 
+	// Setup the clipboard for a cut
 	function cut(file) {
-		setClipboard('cut');
+		var files = file ? [file] : FileList.getSelectedFiles().map(function (file) { return file.name; });
+		setClipboard('cut', $('#dir').val(), files);
+		clearCut();
+		clearSelection();
+		update();
 	}
 
+	// Setup the clipboard for a copy
 	function copy(file) {
-		setClipboard('copy');
+		var files = file ? [file] : FileList.getSelectedFiles().map(function (file) { return file.name; });
+		setClipboard('copy', $('#dir').val(), files);
+		clearCut();
+		clearSelection();
+		update();
 	}
 
 	function clearSelection() {
@@ -135,29 +155,48 @@ $(document).ready(function () {
 		FileList.updateSelectionSummary();
 	}
 
-	function setClipboard(operation) {
-		var files = file ? [file] : FileList.getSelectedFiles().map(function (file) { return file.name; });
-		clipboard = { operation: operation, directory: $('#dir').val(), files: files };
-		localStorage.removeItem(appid);
-		localStorage.setItem(appid, JSON.stringify(clipboard));
-		clearCut();
-		clearSelection();
-		update();
+	// Retrieve the stored clipboard
+	function getClipboard() {
+		stored_clipboard = localStorage.getItem(appid);
+		if (stored_clipboard) {
+			stored_clipboard = JSON.parse(stored_clipboard);
+			if (stored_clipboard.user !== OC.currentUser) {
+				stored_clipboard = clearClipboard();
+			}
+			return stored_clipboard;
+		}
+		return null;
 	}
 
+	// Clear the clipboard
+	function clearClipboard() {
+		localStorage.removeItem(appid);
+		return null;
+	}
+
+	// Set the clipboard
+	function setClipboard(operation, dir, files) {
+		clipboard = { user: OC.currentUser, operation: operation, directory: dir, files: files };
+		localStorage.removeItem(appid);
+		localStorage.setItem(appid, JSON.stringify(clipboard));
+		return getClipboard();
+	}
+
+	// The actual paste method
 	function paste() {
 		if ($(this).hasClass('disabled')) return;
 		FileList.showMask();
-		clipboard.destination = $('#dir').val();
 		$(window).on('beforeunload', processing);
 		replaceExistingFiles(function (replace) {
-			if (!replace) FileList.hideMask();
-			else {
+			if (!replace) {
+				FileList.hideMask();
+			} else {
+				clipboard = getClipboard();
+				var destination = $('#dir').val();
 				var promises = clipboard.files.map(function (file) {
 					var headers = {
-						'Destination': FileList.filesClient._buildUrl(clipboard.destination, file)
+						'Destination': FileList.filesClient._buildUrl(destination, file)
 					};
-
 					return FileList.filesClient._client.request(
 						clipboard.operation == 'cut' ? 'MOVE' : 'COPY',
 						FileList.filesClient._buildUrl(clipboard.directory, file),
@@ -172,45 +211,56 @@ $(document).ready(function () {
 					});
 				});
 
-				Promise.all(promises)
-					.then(function (results) {
-						var rejectedFiles = results.filter(function (item) { return item !== true });
-						if (rejectedFiles.length) {
-							var message;
-							if (clipboard.operation == 'cut') message = '<b>' + t(appid, "An error occurred during the move.") + '</b>';
-							else message = '<b>' + t(appid, "An error occurred during the copy.") + '</b>';
-							message += '<p class="files_clipboard_error">';
-							for (var i = rejectedFiles.length - 1; i >= 0; --i) message += rejectedFiles[i] + '<br>';
-							message += '</p>';
-							OC.Notification.showHtml(message, { type: 'error' });
-						}
+				Promise.all(promises).then(function (results) {
+					var rejectedFiles = results.filter(function (item) { return item !== true });
+					if (rejectedFiles.length) {
+						var message;
 						if (clipboard.operation == 'cut') {
-							localStorage.removeItem(appid);
-							clipboard = null;
-							$paste.hide();
+							message = '<b>' + t(appid, "An error occurred during the move.") + '</b>';
+						} else {
+							message = '<b>' + t(appid, "An error occurred during the copy.") + '</b>';
 						}
-						$(window).off('beforeunload', processing);
-						FileList.reload();
-					})
-					.catch(function (error) {
-						console.error(error);
-					});
-
+						message += '<p class="files_clipboard_error">';
+						for (var i = rejectedFiles.length - 1; i >= 0; --i) {
+							message += rejectedFiles[i] + '<br>';
+						}
+						message += '</p>';
+						OC.Notification.showHtml(message, { type: 'error' });
+					}
+						
+					if (clipboard.operation == 'cut') {
+						clipboard = clearClipboard();
+						$pasteButton.hide();
+					}
+					$(window).off('beforeunload', processing);
+					FileList.reload();
+				})
+				.catch(function (error) {
+					console.error(error);
+				});
 			}
 		});
 	}
 
+	// Message to return while processing
 	function processing() {
-		if (clipboard.operation == 'cut') message = t(appid, 'Processing. Leaving the page now will interrupt the move.');
-		else message = t(appid, 'Processing. Leaving the page now will interrupt the copy.');
+		if (clipboard.operation == 'cut') {
+			message = t(appid, 'Processing. Leaving the page now will interrupt the move.');
+		} else {
+			message = t(appid, 'Processing. Leaving the page now will interrupt the copy.');
+		}
 	}
 
+	// Prompt if there is existing files with the same name
 	function replaceExistingFiles(callback) {
+		clipboard = getClipboard();
 		var $trs = $('tr', $fileList);
 		var existing = clipboard.files.filter(function (file) {
 			return $trs.filterAttr('data-file', file).attr('data-file');
 		});
-		if (!existing.length) callback(true);
+		if (!existing.length) {
+			callback(true);
+		}
 		else {
 			var message = t(appid, 'The contents of the clipboard is in conflicts with elements already present in this directory. Do you want to replace them ?');
 			OC.dialogs.confirm(message, t(appid, 'Paste'), callback, true);
