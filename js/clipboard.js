@@ -196,7 +196,7 @@ $(document).ready(function () {
 				new_clipboard = JSON.parse(event.newValue);
 				local_clipboard = JSON.stringify(getClipboard());
 				if (event.newValue && event.newValue !== local_clipboard) {
-					if (new_clipboard && new_clipboard.hasOwnProperty('operation')) {
+					if (new_clipboard && new_clipboard.hasOwnProperty('operation') && OC.currentUser == new_clipboard.user) {
 						setClipboard(new_clipboard.operation, new_clipboard.directory, new_clipboard.files);
 					} else {
 						clearClipboard();
