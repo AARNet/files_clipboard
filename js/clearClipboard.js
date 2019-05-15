@@ -1,1 +1,1 @@
-localStorage.removeItem('files_clipboard');
+sessionStorage.removeItem('files_clipboard');

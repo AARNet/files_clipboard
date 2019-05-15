@@ -5,19 +5,12 @@ $(document).ready(function () {
 	var $fileList = $('#fileList');
 	var clipboard = getClipboard();
 
-	// Watch storage for clipboard changes
-	var $storageWatcher = setInterval(function() {
-		var stored_clipboard = getClipboard();
-		if (stored_clipboard) {
-			if (JSON.stringify(stored_clipboard) != JSON.stringify(clipboard)) {
-				clipboard = stored_clipboard;
-				update();
-			}
-			$pasteButton.show();	
-		} else {
-			$pasteButton.hide();
-		}
-	}, 1000);
+	// Periodically sync the clipboard to update new tabs
+	var $syncInterval = setInterval(function() { if (clipboard) { syncClipboards(); }}, 1000);
+
+	// Add listener for storages to keep them in sync across tabs
+	window.addEventListener('storage', syncClipboardStorages); 
+
 
 	// The main action buttons
 	var $cutButton = $('<a/>')
@@ -120,6 +113,9 @@ $(document).ready(function () {
 					$trs.filterAttr('data-file', file).addClass('cut');
 				});
 			}
+			if (!clipboard.operation) {
+				$pasteButton.hide();
+			}
 		} else {
 			$pasteButton.hide();
 		}
@@ -133,6 +129,7 @@ $(document).ready(function () {
 	function cut(file) {
 		var files = file ? [file] : FileList.getSelectedFiles().map(function (file) { return file.name; });
 		setClipboard('cut', $('#dir').val(), files);
+		syncClipboards();
 		clearCut();
 		clearSelection();
 		update();
@@ -142,6 +139,7 @@ $(document).ready(function () {
 	function copy(file) {
 		var files = file ? [file] : FileList.getSelectedFiles().map(function (file) { return file.name; });
 		setClipboard('copy', $('#dir').val(), files);
+		syncClipboards();
 		clearCut();
 		clearSelection();
 		update();
@@ -155,9 +153,9 @@ $(document).ready(function () {
 		FileList.updateSelectionSummary();
 	}
 
-	// Retrieve the stored clipboard
+	// Retrieve the session's stored clipboard
 	function getClipboard() {
-		stored_clipboard = localStorage.getItem(appid);
+		stored_clipboard = sessionStorage.getItem(appid);
 		if (stored_clipboard) {
 			stored_clipboard = JSON.parse(stored_clipboard);
 			if (stored_clipboard.user !== OC.currentUser) {
@@ -170,16 +168,43 @@ $(document).ready(function () {
 
 	// Clear the clipboard
 	function clearClipboard() {
-		localStorage.removeItem(appid);
+		sessionStorage.removeItem(appid);
+		$pasteButton.hide();
+		syncClipboards();
 		return null;
 	}
 
 	// Set the clipboard
 	function setClipboard(operation, dir, files) {
 		clipboard = { user: OC.currentUser, operation: operation, directory: dir, files: files };
-		localStorage.removeItem(appid);
-		localStorage.setItem(appid, JSON.stringify(clipboard));
+		sessionStorage.removeItem(appid);
+		sessionStorage.setItem(appid, JSON.stringify(clipboard));
+		$pasteButton.show();	
 		return getClipboard();
+	}
+
+	// Trigger a clipboard sync across windows/tabs
+	function syncClipboards() {
+		localStorage.setItem('syncClipboards', JSON.stringify(getClipboard()));
+		localStorage.removeItem('syncClipboards');
+	}
+
+	// Syncs a clipboard across multiple windows/tabs using localStorage
+	function syncClipboardStorages(e) {
+		if(e.storageArea===localStorage) {
+			if (event.key === 'syncClipboards' && event.newValue) {
+				new_clipboard = JSON.parse(event.newValue);
+				local_clipboard = JSON.stringify(getClipboard());
+				if (event.newValue && event.newValue !== local_clipboard) {
+					if (new_clipboard && new_clipboard.hasOwnProperty('operation')) {
+						setClipboard(new_clipboard.operation, new_clipboard.directory, new_clipboard.files);
+					} else {
+						clearClipboard();
+					}
+					update();
+				}
+			}
+		}
 	}
 
 	// The actual paste method
